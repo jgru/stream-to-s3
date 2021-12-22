@@ -8,6 +8,7 @@
 # Inspired by F. Nordmann, see
 # https://www.vennedey.net/blog/1-Pipe-data-from-STDIN-to-Amazon-S3
 
+import base64
 import boto3
 import botocore
 import sys
@@ -54,6 +55,7 @@ def clean_up(client, bucket, obj, upload_id):
 
 def do_upload(client, bucket, obj, buf, chunksize, secs, retry, is_debug=False):
     upload_id = -1
+
     try:
         # Initiate the upload
         s3_upload = client.create_multipart_upload(Bucket=bucket, Key=obj)
@@ -66,14 +68,15 @@ def do_upload(client, bucket, obj, buf, chunksize, secs, retry, is_debug=False):
         sys.exit(7)
 
     # The md5sum of each part is calculated and the md5sum of the concatenated
-    # checksums is calculated on the way to verify the integrity after the upload
-    # by comparing calculated checksum with the eTag of the uploaded object.
+    # checksums is calculated on the way, in order to verify the integrity
+    # after the upload by comparing calculated checksum with the eTag of the
+    # uploaded object.
     num = 0
 
     # Calculates the amount of digits for string formatting
     kb_digits = math.ceil(math.log10(chunksize))
     # Store information of the last uploaded part for stream closure
-    part_info = None
+    parts = []
     # MD5 of the read data
     in_md5sum = hashlib.md5()
 
@@ -95,14 +98,15 @@ def do_upload(client, bucket, obj, buf, chunksize, secs, retry, is_debug=False):
                 upload_try += 1
 
                 part = client.upload_part(
-                    Body=BytesIO(chunk),
                     Bucket=bucket,
+                    Body=chunk,
                     ContentLength=len(chunk),
+                    ContentMD5=base64.b64encode(part_md5sum.digest()).decode("utf-8"),
                     PartNumber=num,
                     UploadId=upload_id,
                     Key=obj,
                 )
-                part_info = {"Parts": [{"PartNumber": num, "ETag": part["ETag"]}]}
+                parts.append({"PartNumber": num, "ETag": part["ETag"]})
 
                 if part["ETag"][1:-1] != part_md5sum.hexdigest():
                     print(f"ETag of part {num} mismatches MD5...")
@@ -138,7 +142,7 @@ def do_upload(client, bucket, obj, buf, chunksize, secs, retry, is_debug=False):
                 Bucket=bucket,
                 UploadId=upload_id,
                 Key=obj,
-                MultipartUpload=part_info,
+                MultipartUpload={"Parts": parts},
             )
             print(
                 f"Completed uploading {num} parts and "
