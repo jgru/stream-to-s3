@@ -1,0 +1,69 @@
+* stream-to-s3
+~streamtos3~ is a utility to stream data (mainly from stdin) into an S3-bucket.
+
+* Motivation
+Surprisingly, the official [[https://github.com/aws/aws-cli][aws-cli]] does not support piping data into S3-storage.
+In order to be able to obey to the Unix philosophy and make use of the pipelining-paradigm, two tools, namely [[https://github.com/mhausenblas/s3-echoer][s3-echoer]] and [[https://github.com/68b32/2s3][2s3]] have been built. While the former is written in Go, the latter was written in Python. Unfortunately it is 8 years old, unmaintained and still using Python2, which reached its end of life, and an old [[https://github.com/boto/boto][boto]]-version. Therefore, I decided to recreate a similar utility, named ~streamtos3~ using Python3 and the AWS SDK for Python [[https://github.com/boto/boto3][boto3]].
+
+You may wonder, why someone would want to use that and consider the great [[https://github.com/aws/aws-cli][aws-cli]] insufficient in that regard. This utitility is born from the need to handle situations where you do not want to write to the disk, for example during forensic investigations of a live system (or space reasons on tiny cloud instances as well).
+
+* Integrity protection
+To protect the integrity of the uploaded data, an MD5-hash is calculated for each sum, which is compared to the /ETag/ returned in the response of an ~upload_part()~-call. If the checksums do not match, the part is uploaded again, in total =retry= times in an interval of =secs= seconds before the upload fails.
+
+Due to not knowing the chunksize of the stored object beforehand (not the uploaded chunks; if you know this, please drop me message:)), the tool is not able to verify the /ETag/ of the uploaded data, if it is chunked for storage. However, the uploaded data should be of full integrity, if the integrity of each and every part could be verified. To ensure this ultimately, download the stored object and compare its md5sum, with the one outputted by this tool which is calculated over the whole input stream.
+
+* Usage
+
+** Basic Usage
+
+#+begin_src
+usage: streamtos3.py [-h] -k KEYFILE -b BUCKET -o OBJ [-c CHUNKSIZE] [-s SECS_WAIT] [-r RETRY] [-d] [infile]
+
+Store data from stdin into S3 bucket DISCLAIMER: This is an _unvalidated_ proof of concept, use at _your own risk_!
+
+positional arguments:
+  infile                Filepath or '-' for stdin
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -k KEYFILE, --keyfile KEYFILE
+                        File that contains: <AWS_KEY>:<AWS_SECRET> for S3 access.
+  -b BUCKET, --bucket BUCKET
+                        Name of the target bucket.
+  -o OBJ, --obj OBJ     Name of the object to write
+  -c CHUNKSIZE, --chunksize CHUNKSIZE
+                        Split upload in CHUNK_SIZE bytes. (Default: 8 MiB)
+  -s SECS_WAIT, --secs-wait SECS_WAIT
+                        Time in seconds to wait until retry upload a failed part again (Default: 5)
+  -r RETRY, --retry RETRY
+                        Retries until giving up (Default: 5)
+  -d, --debug           Print debug information
+#+end_src
+
+** Examples
+
+#+begin_src shell
+
+#+end_src
+
+* Dependencies
+ ~stream-to-s3~ depends on the AWS SDK for Python [[https://github.com/boto/boto3][boto3]] which itself has the following dependencies.
+ - botocore
+ - jmespath
+ - python-dateutil
+ - s3transfer
+ - six
+ - urllib3
+
+Please refer to the ~requirements.txt~ file for details on the versions.
+
+* Installation
+Currently a ~setup.py~ is not provided, in order to use the tool, setup a ~venv~ and install the requirements:
+
+#+begin_src shell
+python3 -m venv venv
+source venv/bin/activate
+pip3 install -r requirements.txt
+python3 streamtos3.py -h
+#+end_src
+
