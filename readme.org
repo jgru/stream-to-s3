@@ -8,9 +8,12 @@ In order to be able to obey to the Unix philosophy and make use of the pipelinin
 You may wonder, why someone would want to use that and consider the great [[https://github.com/aws/aws-cli][aws-cli]] insufficient in that regard. This utitility is born from the need to handle situations where you do not want to write to the disk, for example during forensic investigations of a live system (or space reasons on tiny cloud instances as well).
 
 * Integrity protection
-To protect the integrity of the uploaded data, an MD5-hash is calculated for each sum, which is compared to the /ETag/ returned in the response of an ~upload_part()~-call. If the checksums do not match, the part is uploaded again, in total =retry= times in an interval of =secs= seconds before the upload fails.
+To protect the integrity of the uploaded data, a three-fold approach is implemented:
+1. An MD5-hash is calculated for each chunk of data this is supplied as /ContentMD5/ to the ~upload_part()~-call, so that the AWS-endpoint checks the integrity of the received part.
+2. The /ETag/-checksum wich is returned as response to an ~upload_part()~-call, is compared to the originally calculated MD5-hash. If the checksums do not match, the part is uploaded again, in total =retry= times in an interval of =secs= seconds before the upload fails.
+3. After completing the upload, the overall /ETag/ of the object in the S3-bucket is retrieved and compared to the "local" /ETag/ which is constructed by hashing the concatenation the MD5-sums of the individual parts, which is done by the S3-endpoint remotely as well.
 
-Due to not knowing the chunksize of the stored object beforehand (not the uploaded chunks; if you know this, please drop me message:)), the tool is not able to verify the /ETag/ of the uploaded data, if it is chunked for storage. However, the uploaded data should be of full integrity, if the integrity of each and every part could be verified. To ensure this ultimately, download the stored object and compare its md5sum, with the one outputted by this tool which is calculated over the whole input stream.
+By doing so, we can be fairly sure, that we stored the data, which was actually read.
 
 * Usage
 

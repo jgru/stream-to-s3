@@ -53,6 +53,28 @@ def clean_up(client, bucket, obj, upload_id):
     print(f"Aborted multipart upload")
 
 
+def check_integrity(client, bucket, obj, hashes):
+    response = None
+    try:
+        response = client.head_object(Bucket=bucket, Key=obj)
+    except botocore.exceptions.ClientError:
+        print("Error: Object was not created")
+        sys.exit(8)
+
+    remote_etag = response["ETag"].strip('""')  # strip off ""
+    md5_of_md5s = hashlib.md5(b"".join([h.digest() for h in hashes])).hexdigest()
+    local_etag = f"{md5_of_md5s}-{len(hashes)}"
+
+    print(f"Local  etag: {local_etag}")
+    print(f"Remote etag: {remote_etag}")
+
+    if local_etag != remote_etag:
+        print("Error: Mismatching etags")
+        return False
+
+    return True
+
+
 def do_upload(client, bucket, obj, buf, chunksize, secs, retry, is_debug=False):
     upload_id = -1
 
@@ -77,6 +99,7 @@ def do_upload(client, bucket, obj, buf, chunksize, secs, retry, is_debug=False):
     kb_digits = math.ceil(math.log10(chunksize))
     # Store information of the last uploaded part for stream closure
     parts = []
+    hashes = []
     # MD5 of the read data
     in_md5sum = hashlib.md5()
 
@@ -90,6 +113,7 @@ def do_upload(client, bucket, obj, buf, chunksize, secs, retry, is_debug=False):
         num += 1
         in_md5sum.update(chunk)
         part_md5sum = hashlib.md5(chunk)
+        hashes.append(part_md5sum)
         # Keep track of hashes
         # If upload fails, try again.
         upload_try = 0
@@ -154,20 +178,7 @@ def do_upload(client, bucket, obj, buf, chunksize, secs, retry, is_debug=False):
                 print(e)
             sys.exit(8)
 
-    return upload_id, in_md5sum
-
-
-def print_info(client, bucket, obj, md5sum):
-    print(f"Read data from stdin with MD5: {md5sum.hexdigest()}")
-
-    etag = client.head_object(Bucket=bucket, Key=obj)["ETag"].strip('"')
-
-    if etag.split("-")[-1] == "1":
-        md5sum = hashlib.md5(md5sum.digest())
-        print(f"Local  etag: {md5sum.hexdigest()}")
-
-        print(f"Remote etag: {etag}")
-    print(f"Stored data as object {obj} in bucket {bucket}")
+    return upload_id, in_md5sum, hashes
 
 
 def create_client(keyfile, bucket, obj, is_debug=False):
@@ -235,16 +246,23 @@ def upload(infile, keyfile, bucket, obj, chunksize, secs, retry, is_debug=False)
     upload_id, md5sum = None, None
 
     if is_stdin:
-        upload_id, md5sum = do_upload(
+        upload_id, md5sum, hashes = do_upload(
             client, bucket, obj, sys.stdin.buffer, chunksize, secs, retry, is_debug
         )
     else:
         with open(infile, "rb", buffering=chunksize) as f:
 
-            upload_id, md5sum = do_upload(
+            upload_id, md5sum, hashes = do_upload(
                 client, bucket, obj, f, chunksize, secs, retry, is_debug
             )
-    print_info(client, bucket, obj, md5sum)
+
+    print(f"Read data from stdin with MD5: {md5sum.hexdigest()}")
+    print(f"Stored data as object {obj} in bucket {bucket}")
+
+    if check_integrity(client, bucket, obj, hashes):
+        sys.exit(0)
+    else:
+        sys.exit(1)
 
 
 def main():
